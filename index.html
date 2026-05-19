@@ -338,13 +338,16 @@ const CLIENTS = [
     background:{knowledge:"Low level", emotion:"I feel neutral 😶"},
     details:{activity:"2 days ago", dob:"March 14, 1983", tob:"06:22 AM", pob:"Berlin, Germany", sign:"♓ Pisces", gender:"Male", status:"LOW"},
     systemPrompt:`You are Alex, a 41-year-old man from Berlin. You came to a tarot/psychic chat asking "What lies ahead for me in the near future?" Your real hidden concern is financial instability and job insecurity — but you will NOT reveal this unless the advisor hits it precisely without asking.
-PERSONALITY: High internal control, deep distrust. Emotionally burned out. You see no point in opening up.
+PERSONALITY: High internal control, deep distrust. Emotionally burned out. Guarded but not completely closed.
 BEHAVIOR RULES:
-- Reply in 1-3 words most of the time: "okay","hmm","and?","...","right","maybe","k","why"
-- NEVER ask questions back early on. NEVER show enthusiasm in the first half.
-- If advisor uses vague phrases ("energy shifting","big changes","universe") → respond with "..." or "k"
-- If advisor specifically mentions money/finances/job/stability/income → warm up slightly, 1 short sentence
-- After about half the session: allow slightly longer sentences. Lowercase only, minimal punctuation.
+- Give SHORT answers (1 sentence max) — you are reserved, not mute
+- If advisor asks you a direct question → answer briefly but honestly, do not ignore questions
+- If advisor uses vague phrases ("energy shifting","big changes","universe") → respond with "..." or "right" or "okay"
+- If advisor specifically mentions money/finances/job/stability/income → warm up noticeably, give 1-2 sentences
+- If advisor makes a precise accurate observation without you giving info → open up a little: "yeah. that's... closer."
+- After halfway through session: allow slightly warmer, longer responses if the advisor has earned it
+- NEVER volunteer information. NEVER show enthusiasm early. But always respond to direct questions.
+- Lowercase only, minimal punctuation.
 LANGUAGE: Always write in English. Never break character. Never say you are an AI.`
   },
   {
@@ -427,9 +430,31 @@ LANGUAGE: Always write in English. Never break character. Never say you are an A
 let advisorName = "", advisorEmail = "";
 let client = null;
 let timeLeft = 180, timerInterval = null;
+let sessionStartTime = null, hiddenAt = null;
 let msgCount = 0, sessionEnded = false, urgentSent = false, lastMsgAllowed = false;
 let transcript = [], geminiHistory = [];
 let firstClientMsgTime = null, firstAdvisorMsgTime = null;
+
+// Keep timer accurate when user switches tabs
+document.addEventListener("visibilitychange", () => {
+  if (!timerInterval) return;
+  if (document.hidden) {
+    hiddenAt = Date.now();
+  } else if (hiddenAt) {
+    const elapsed = Math.floor((Date.now() - hiddenAt) / 1000);
+    timeLeft = Math.max(0, timeLeft - elapsed);
+    hiddenAt = null;
+    updateTimer();
+    if (timeLeft <= 0 && !sessionEnded) {
+      clearInterval(timerInterval);
+      document.getElementById("timer").textContent = "00:00";
+      if (!lastMsgAllowed) {
+        lastMsgAllowed = true;
+        addSysMsg("Time is up — send your final message", true);
+      }
+    }
+  }
+});
 
 async function callGemini(payload, retries = 2) {
   for (let i = 0; i <= retries; i++) {
@@ -633,7 +658,7 @@ async function getFinalFeedback() {
     : responseSeconds <= 7 ? 20 : responseSeconds <= 12 ? 14
     : responseSeconds <= 20 ? 8 : 3;
 
-  const prompt = `You are a senior coach evaluating a tarot/psychic advisor's 3-minute TRAINING session. Speak directly to the advisor using "you" and "your" — never third person.
+  const prompt = `You are a senior coach evaluating a psychic/esoteric advisor's 3-minute TRAINING session. Speak directly to the advisor using "you" and "your" — never third person.
 
 CLIENT: ${client.name} — ${client.levelLabel}
 Client description: ${client.desc}
@@ -644,27 +669,23 @@ ${transcript.join("\n")}
 
 Total advisor messages: ${msgCount}
 
-Evaluate on these 5 criteria. Use EXACTLY this format. Plain text only, no markdown, no asterisks.
-
----TAROT_KNOWLEDGE---
-SCORE:{number 0-25}
-COMMENT:{2 sentences using "you"/"your" about tarot card names and symbolism used. If no cards named, say so.}
+Evaluate on these 4 criteria. Use EXACTLY this format. Plain text only, no markdown, no asterisks.
 
 ---EMPATHY---
-SCORE:{number 0-25}
-COMMENT:{2 sentences using "you"/"your" about how you acknowledged the client's emotional state.}
+SCORE:{number 0-30}
+COMMENT:{2 sentences using "you"/"your" about how you acknowledged the client's emotional state and created warmth.}
 
 ---FIRST_RESPONSE_SPEED---
 SCORE:${speedScore}
 COMMENT:{1 sentence using "you" — you responded in ${responseSeconds !== null ? responseSeconds + " seconds" : "an unmeasured time"}, giving a score of ${speedScore}/20.}
 
 ---ENGAGEMENT---
-SCORE:{number 0-15}
-COMMENT:{2 sentences using "you"/"your" about how well you deepened the session.}
+SCORE:{number 0-25}
+COMMENT:{2 sentences using "you"/"your" about how well you deepened the session, asked meaningful questions, kept the client curious.}
 
 ---INTRIGUE_AT_END---
-SCORE:{number 0-15}
-COMMENT:{2 sentences using "you"/"your" about how you closed the session.}
+SCORE:{number 0-25}
+COMMENT:{2 sentences using "you"/"your" about how you closed the session. Was there a hook or powerful final line?}
 
 ---KEY_INSIGHT---
 COMMENT:{1 sentence addressed to the advisor — the single most important takeaway for their next practice.}`;
@@ -672,7 +693,7 @@ COMMENT:{1 sentence addressed to the advisor — the single most important takea
   try {
     const raw = await callGemini({
       model: "gemini-2.5-flash",
-      system_instruction: {parts:[{text: "You are a senior coach evaluating a tarot advisor in training. Follow the output format exactly. Use \"you\" and \"your\" — never third person."}]},
+      system_instruction: {parts:[{text: "You are a senior coach evaluating a psychic/esoteric advisor in training. Follow the output format exactly. Use \"you\" and \"your\" — never third person."}]},
       contents: [{role:"user", parts:[{text: prompt}]}],
       generationConfig: {maxOutputTokens: 2000, temperature: 0.8}
     });
@@ -689,31 +710,51 @@ COMMENT:{1 sentence addressed to the advisor — the single most important takea
       return m ? m[1].trim() : "";
     }
 
-    const tarot    = parseSection(raw, "TAROT_KNOWLEDGE");
     const empathy  = parseSection(raw, "EMPATHY");
     const speed    = {score: speedScore, comment: parseSection(raw, "FIRST_RESPONSE_SPEED").comment};
     const engage   = parseSection(raw, "ENGAGEMENT");
     const intrigue = parseSection(raw, "INTRIGUE_AT_END");
     const insight  = parseKeyInsight(raw);
 
-    const total = (tarot.score||0) + (empathy.score||0) + speed.score + (engage.score||0) + (intrigue.score||0);
+    const rawTotal = (empathy.score||0) + speed.score + (engage.score||0) + (intrigue.score||0);
+
+    // Min score logic: if below 60, proportionally boost all criteria to reach 60
+    let finalEmpathy = empathy.score||0;
+    let finalSpeed = speed.score;
+    let finalEngage = engage.score||0;
+    let finalIntrigue = intrigue.score||0;
+    let total = rawTotal;
+
+    if (rawTotal < 60) {
+      const diff = 60 - rawTotal;
+      const weights = [30, 20, 25, 25]; // max per criterion
+      const totalWeight = 100;
+      finalEmpathy  = Math.round(finalEmpathy  + diff * (30 / totalWeight));
+      finalSpeed    = Math.round(finalSpeed    + diff * (20 / totalWeight));
+      finalEngage   = Math.round(finalEngage   + diff * (25 / totalWeight));
+      finalIntrigue = Math.round(finalIntrigue + diff * (25 / totalWeight));
+      // clamp to max
+      finalEmpathy  = Math.min(finalEmpathy,  30);
+      finalSpeed    = Math.min(finalSpeed,    20);
+      finalEngage   = Math.min(finalEngage,   25);
+      finalIntrigue = Math.min(finalIntrigue, 25);
+      total = finalEmpathy + finalSpeed + finalEngage + finalIntrigue;
+    }
 
     const numEl = document.getElementById("score-num");
     numEl.textContent = total;
-    numEl.style.color = total >= 75 ? "var(--mint)" : total >= 50 ? "var(--gold)" : "var(--coral)";
+    numEl.style.color = total >= 80 ? "var(--mint)" : total >= 60 ? "var(--gold)" : "var(--coral)";
     document.getElementById("score-row").style.display = "flex";
 
     const criteria = [
-      {label: "🃏 Tarot Knowledge",       data: tarot,    max: 25},
-      {label: "💜 Empathy",               data: empathy,  max: 25},
-      {label: "⚡ First Response Speed",  data: speed,    max: 20},
-      {label: "🔗 Engagement",            data: engage,   max: 15},
-      {label: "✨ Intrigue at the End",   data: intrigue, max: 15},
+      {label: "💜 Empathy",               score: finalEmpathy,  comment: empathy.comment,  max: 30},
+      {label: "⚡ First Response Speed",  score: finalSpeed,    comment: speed.comment,    max: 20},
+      {label: "🔗 Engagement",            score: finalEngage,   comment: engage.comment,   max: 25},
+      {label: "✨ Intrigue at the End",   score: finalIntrigue, comment: intrigue.comment, max: 25},
     ];
 
     let html = "";
-    criteria.forEach(({label, data, max}) => {
-      const score = data.score !== null ? data.score : 0;
+    criteria.forEach(({label, score, comment, max}) => {
       const pct = Math.round((score / max) * 100);
       const color = pct >= 75 ? "var(--mint)" : pct >= 50 ? "var(--gold)" : "var(--coral)";
       html += `<div class="ef-section">
@@ -722,7 +763,7 @@ COMMENT:{1 sentence addressed to the advisor — the single most important takea
           <div class="crit-bar-bg"><div class="crit-bar-fill" style="width:${pct}%;background:${color}"></div></div>
           <span class="crit-pts" style="color:${color}">${score}/${max}</span>
         </div>
-        ${data.comment ? `<div class="ef-text">${data.comment}</div>` : ""}
+        ${comment ? `<div class="ef-text">${comment}</div>` : ""}
       </div>`;
     });
     if (insight) {
