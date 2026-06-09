@@ -771,7 +771,13 @@ async function getFinalFeedback() {
     : responseSeconds <= 7 ? 10 : responseSeconds <= 12 ? 7
     : responseSeconds <= 20 ? 4 : 1;
 
-  const prompt = `You are a senior coach evaluating a psychic/esoteric advisor's 3-minute TRAINING session. Speak directly to the advisor using "you" and "your" — never third person.
+  const prompt = You are a senior Nebula coach evaluating a psychic/esoteric advisor's 3-minute TRAINING session. Speak directly using "you"/"your".
+
+CALIBRATION GUIDE (use this to anchor your scoring):
+- A STRONG advisor (88-95/100): gives specific insights without asking for info, names emotions precisely, hooks the client within 2 messages, final message creates genuine intrigue
+- An AVERAGE advisor (78-82/100): answers the question but is slightly generic, shows empathy but with common phrases, engages but doesn't deepen
+- A WEAK advisor (45-60/100): vague answers ("I feel energy", "something is shifting"), misses the emotional subtext, no real hook at the end
+- A POOR advisor (0-44/100): barely engages, ignores the client's real need, no structure, generic phrases only
 
 CLIENT: ${client.name} — ${client.levelLabel}
 Client description: ${client.desc}
@@ -782,30 +788,32 @@ ${transcript.join("\n")}
 
 Total advisor messages: ${msgCount}
 
+IMPORTANT: Reference specific moments from the transcript in your comments. Quote or paraphrase what the advisor actually wrote — do not give generic feedback.
+
 Evaluate on these 5 criteria. Use EXACTLY this format. Plain text only, no markdown, no asterisks.
 
 ---ANSWER_SUFFICIENCY---
 SCORE:{number 0-25}
-COMMENT:{2 sentences using "you"/"your". Score HIGH if: you gave a clear, specific answer to the client's actual question; you named concrete details rather than vague generalities; you went one step beyond what was asked. Score LOW if: you used phrases like "his energy is complex", "there's a lot happening", "I sense turbulence" without grounding them; you asked multiple questions before giving any value; you gave a complete answer but stopped exactly where the client's question ended, missing the chance to go one step further.}
+COMMENT:{2 sentences referencing specific things the advisor actually said in the transcript. Score HIGH (20-25) if: they gave a clear specific answer with concrete details, went beyond what was asked. Score AVERAGE (13-19) if: the answer covered the question but stayed generic. Score LOW (0-12) if: vague phrases without grounding, no real answer given.}
 
 ---EMPATHY---
 SCORE:{number 0-20}
-COMMENT:{2 sentences using "you"/"your". Score HIGH if: you named the specific emotion behind the client's question (fear, grief, hope, anxiety); your language showed you understood the pain behind the question, not just the question itself; your tone matched the client's emotional state. Score LOW if: you used generic phrases like "I understand how you feel" or "I can feel your pain" without specifics; you jumped straight to the reading without acknowledging the emotional context; your tone was too clinical or too cheerful for what the client was experiencing.}
+COMMENT:{2 sentences referencing specific moments from the transcript. Score HIGH (16-20): named the exact emotion behind the question, matched the client's tone. Score AVERAGE (10-15): showed care but used generic phrases. Score LOW (0-9): skipped emotional acknowledgment, clinical or mismatched tone.}
 
 ---FIRST_RESPONSE_SPEED---
 SCORE:${speedScore}
-COMMENT:{1 sentence using "you" — you responded in ${responseSeconds !== null ? responseSeconds + " seconds" : "an unmeasured time"}, which gives a score of ${speedScore}/10.}
+COMMENT:{1 sentence — you responded in ${responseSeconds !== null ? responseSeconds + " seconds" : "an unmeasured time"}, which gives a score of ${speedScore}/10.}
 
 ---ENGAGEMENT---
 SCORE:{number 0-20}
-COMMENT:{2 sentences using "you"/"your". Score HIGH if: you asked at least one meaningful clarifying question that opened the conversation rather than closed it; you offered to look at a next layer, a different angle, or a step beyond the original question; you planted a reason for the client to stay curious. Score LOW if: you gave a complete answer with no invitation to continue; you asked questions before giving value (interrogation pattern); you ended messages with a full stop and nothing more — no hook, no thread, no door left open.}
+COMMENT:{2 sentences referencing specific questions or hooks the advisor used. Score HIGH (16-20): asked meaningful questions that opened the conversation, planted curiosity. Score AVERAGE (10-15): some engagement but surface level. Score LOW (0-9): interrogated before giving value, or gave complete answers with no thread.}
 
 ---INTRIGUE_AT_END---
 SCORE:{number 0-25}
-COMMENT:{2 sentences using "you"/"your". Score HIGH if: your final message created a genuine reason to continue; it carried real value — not a vague tease; it felt like the end of a chapter with a hook into the next one; it mirrored the blurred-message mechanic: worth paying to read. Score LOW if: your final message was a complete answer with no thread left open; you used phrases like "That's all I see" or "I don't see anything else"; you ended without any invitation, question, or forward momentum.}
+COMMENT:{2 sentences referencing the advisor's actual final message. Score HIGH (20-25): final message had real value plus a hook, felt worth paying to unlock. Score AVERAGE (13-19): ended with something but the hook was weak or generic. Score LOW (0-12): final message was a closed statement with no forward pull.}
 
----KEY_INSIGHT---
-COMMENT:{1 sentence addressed directly to the advisor — the single most important thing to work on before the next practice session.}`;
+---ADVICE_FOR_NEXT_SESSION---
+COMMENT:{2-3 sentences of specific, actionable advice based on THIS session — reference what actually happened in the transcript. Tell the advisor the one pattern that held them back most, and what to do differently next time. Be direct and specific, not generic.};
 
   try {
     const raw = await callGemini({
@@ -821,18 +829,18 @@ COMMENT:{1 sentence addressed directly to the advisor — the single most import
       if (!m) return {score: null, comment: ""};
       return {score: parseInt(m[1]), comment: m[2].trim()};
     }
-    function parseKeyInsight(text) {
-      const rx = /---KEY_INSIGHT---[\s\S]*?COMMENT:([^\n\-][\s\S]*?)(?=---|$)/i;
-      const m = text.match(rx);
-      return m ? m[1].trim() : "";
-    }
+  function parseAdvice(text) {
+  const rx = /---ADVICE_FOR_NEXT_SESSION---[\s\S]*?COMMENT:([^\n\-][\s\S]*?)(?=---|$)/i;
+  const m = text.match(rx);
+  return m ? m[1].trim() : "";
+}
 
     const sufficiency = parseSection(raw, "ANSWER_SUFFICIENCY");
     const empathy     = parseSection(raw, "EMPATHY");
     const speed       = {score: speedScore, comment: parseSection(raw, "FIRST_RESPONSE_SPEED").comment};
     const engage      = parseSection(raw, "ENGAGEMENT");
     const intrigue    = parseSection(raw, "INTRIGUE_AT_END");
-    const insight     = parseKeyInsight(raw);
+    const insight = parseAdvice(raw);
 
     const rawTotal = (sufficiency.score||0) + (empathy.score||0) + speed.score + (engage.score||0) + (intrigue.score||0);
 
@@ -844,14 +852,7 @@ COMMENT:{1 sentence addressed directly to the advisor — the single most import
     let fIntrigue= intrigue.score||0;
     let total    = rawTotal;
 
-    if (rawTotal < 60) {
-      const diff = 60 - rawTotal;
-      fSuff     = Math.min(25, Math.round(fSuff     + diff * (25/100)));
-      fEmpathy  = Math.min(20, Math.round(fEmpathy  + diff * (20/100)));
-      fSpeed    = Math.min(10, Math.round(fSpeed    + diff * (10/100)));
-      fEngage   = Math.min(20, Math.round(fEngage   + diff * (20/100)));
-      fIntrigue = Math.min(25, Math.round(fIntrigue + diff * (25/100)));
-      total = fSuff + fEmpathy + fSpeed + fEngage + fIntrigue;
+  // No minimum — honest 0-100 score
     }
 
     const numEl = document.getElementById("score-num");
@@ -882,7 +883,7 @@ COMMENT:{1 sentence addressed directly to the advisor — the single most import
     });
     if (insight) {
       html += `<div class="ef-section" style="padding-top:14px;border-top:1px solid var(--border)">
-        <span class="ef-label">Key Insight for Next Practice</span>
+        <span class="ef-label">🧭 Advice for Next Session</span>
         <div class="ef-text">${insight}</div>
       </div>`;
     }
